@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import type { CanvasConnection, CanvasElement } from '@/types';
-import type { EdgeMouseEvent, NodeDragEvent, Connection } from '@vue-flow/core';
+import type { EdgeMouseEvent, NodeDragEvent, Connection, XYPosition } from '@vue-flow/core';
 import { useVueFlow, VueFlow, PanelPosition } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
@@ -13,10 +13,14 @@ const $style = useCssModule();
 
 const emit = defineEmits<{
 	'update:modelValue': [elements: CanvasElement[]];
-	'update:node:position': [id: string, position: { x: number; y: number }];
+	'update:node:position': [id: string, position: XYPosition];
+	'update:node:active': [id: string];
+	'update:node:enabled': [id: string];
+	'update:node:selected': [id?: string];
 	'delete:node': [id: string];
 	'delete:connection': [connection: Connection];
 	'create:connection': [connection: Connection];
+	'click:pane': [position: XYPosition];
 }>();
 
 const props = withDefaults(
@@ -34,7 +38,9 @@ const props = withDefaults(
 	},
 );
 
-const { getSelectedEdges, getSelectedNodes } = useVueFlow({ id: props.id });
+const { getSelectedEdges, getSelectedNodes, viewportRef, project } = useVueFlow({
+	id: props.id,
+});
 
 const hoveredEdges = ref<Record<string, boolean>>({});
 
@@ -50,6 +56,23 @@ function onNodeDragStop(e: NodeDragEvent) {
 	e.nodes.forEach((node) => {
 		emit('update:node:position', node.id, node.position);
 	});
+}
+
+function onSelectionDragStop(e: NodeDragEvent) {
+	onNodeDragStop(e);
+}
+
+function onSetNodeActive(id: string) {
+	emit('update:node:active', id);
+}
+
+function onSelectNode() {
+	const selectedNodeId = getSelectedNodes.value[getSelectedNodes.value.length - 1]?.id;
+	emit('update:node:selected', selectedNodeId);
+}
+
+function onToggleNodeEnabled(id: string) {
+	emit('update:node:enabled', id);
 }
 
 function onDeleteNode(id: string) {
@@ -78,6 +101,16 @@ function onMouseEnterEdge(event: EdgeMouseEvent) {
 function onMouseLeaveEdge(event: EdgeMouseEvent) {
 	hoveredEdges.value[event.edge.id] = false;
 }
+
+function onClickPane(event: MouseEvent) {
+	const bounds = viewportRef.value?.getBoundingClientRect() ?? { left: 0, top: 0 };
+	const position = project({
+		x: event.offsetX - bounds.left,
+		y: event.offsetY - bounds.top,
+	});
+
+	emit('click:pane', position);
+}
 </script>
 
 <template>
@@ -92,12 +125,20 @@ function onMouseLeaveEdge(event: EdgeMouseEvent) {
 		:max-zoom="2"
 		data-test-id="canvas"
 		@node-drag-stop="onNodeDragStop"
+		@selection-drag-stop="onSelectionDragStop"
 		@edge-mouse-enter="onMouseEnterEdge"
 		@edge-mouse-leave="onMouseLeaveEdge"
+		@pane-click="onClickPane"
 		@connect="onConnect"
 	>
 		<template #node-canvas-node="canvasNodeProps">
-			<CanvasNode v-bind="canvasNodeProps" @delete="onDeleteNode" />
+			<CanvasNode
+				v-bind="canvasNodeProps"
+				@delete="onDeleteNode"
+				@select="onSelectNode"
+				@toggle="onToggleNodeEnabled"
+				@activate="onSetNodeActive"
+			/>
 		</template>
 
 		<template #edge-canvas-edge="canvasEdgeProps">
@@ -119,8 +160,6 @@ function onMouseLeaveEdge(event: EdgeMouseEvent) {
 		></Controls>
 	</VueFlow>
 </template>
-
-<style lang="scss" module></style>
 
 <style lang="scss">
 .vue-flow__controls {

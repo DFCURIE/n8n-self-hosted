@@ -178,7 +178,8 @@
 </template>
 
 <script lang="ts">
-import { type CSSProperties, defineComponent } from 'vue';
+import { defineComponent } from 'vue';
+import type { PropType, CSSProperties } from 'vue';
 import { mapStores } from 'pinia';
 import xss from 'xss';
 import { useStorage } from '@/composables/useStorage';
@@ -192,7 +193,7 @@ import {
 	SIMULATE_TRIGGER_NODE_TYPE,
 	WAIT_TIME_UNLIMITED,
 } from '@/constants';
-import { nodeBase } from '@/mixins/nodeBase';
+import { NodeConnectionType, NodeHelpers } from 'n8n-workflow';
 import type {
 	ConnectionTypes,
 	ExecutionSummary,
@@ -201,8 +202,8 @@ import type {
 	INodeTypeDescription,
 	ITaskData,
 	NodeOperationError,
+	Workflow,
 } from 'n8n-workflow';
-import { NodeConnectionType, NodeHelpers } from 'n8n-workflow';
 
 import NodeIcon from '@/components/NodeIcon.vue';
 import TitledList from '@/components/TitledList.vue';
@@ -222,6 +223,10 @@ import { useExternalHooks } from '@/composables/useExternalHooks';
 import { usePinnedData } from '@/composables/usePinnedData';
 import { useDeviceSupport } from 'n8n-design-system';
 import { useDebounce } from '@/composables/useDebounce';
+import type { BrowserJsPlumbInstance } from '@jsplumb/browser-ui';
+import { useCanvasStore } from '@/stores/canvas.store';
+import { useHistoryStore } from '@/stores/history.store';
+import { useNodeBase } from '@/composables/useNodeBase';
 
 export default defineComponent({
 	name: 'Node',
@@ -230,7 +235,6 @@ export default defineComponent({
 		FontAwesomeIcon,
 		NodeIcon,
 	},
-	mixins: [nodeBase],
 	props: {
 		isProductionExecutionPreview: {
 			type: Boolean,
@@ -244,6 +248,33 @@ export default defineComponent({
 			type: Boolean,
 			default: false,
 		},
+		name: {
+			type: String,
+			required: true,
+		},
+		instance: {
+			type: Object as PropType<BrowserJsPlumbInstance>,
+			required: true,
+		},
+		isReadOnly: {
+			type: Boolean,
+		},
+		isActive: {
+			type: Boolean,
+		},
+		hideActions: {
+			type: Boolean,
+		},
+		disableSelecting: {
+			type: Boolean,
+		},
+		showCustomTooltip: {
+			type: Boolean,
+		},
+		workflow: {
+			type: Object as PropType<Workflow>,
+			required: true,
+		},
 	},
 	emits: {
 		run: null,
@@ -251,7 +282,7 @@ export default defineComponent({
 		removeNode: null,
 		toggleDisableNode: null,
 	},
-	setup(props) {
+	setup(props, { emit }) {
 		const workflowsStore = useWorkflowsStore();
 		const contextMenu = useContextMenu();
 		const externalHooks = useExternalHooks();
@@ -261,12 +292,21 @@ export default defineComponent({
 		const deviceSupport = useDeviceSupport();
 		const { callDebounced } = useDebounce();
 
+		const nodeBase = useNodeBase({
+			name: props.name,
+			instance: props.instance,
+			workflowObject: props.workflow,
+			isReadOnly: props.isReadOnly,
+			emit: emit as (event: string, ...args: unknown[]) => void,
+		});
+
 		return {
 			contextMenu,
 			externalHooks,
 			nodeHelpers,
 			pinnedData,
 			deviceSupport,
+			...nodeBase,
 			callDebounced,
 		};
 	},
@@ -281,7 +321,20 @@ export default defineComponent({
 		};
 	},
 	computed: {
-		...mapStores(useNodeTypesStore, useNDVStore, useUIStore, useWorkflowsStore),
+		...mapStores(
+			useNodeTypesStore,
+			useCanvasStore,
+			useNDVStore,
+			useUIStore,
+			useWorkflowsStore,
+			useHistoryStore,
+		),
+		data(): INodeUi | null {
+			return this.workflowsStore.getNodeByName(this.name);
+		},
+		nodeId(): string {
+			return this.data?.id || '';
+		},
 		showPinnedDataInfo(): boolean {
 			return this.pinnedData.hasData.value && !this.isProductionExecutionPreview;
 		},
@@ -441,6 +494,9 @@ export default defineComponent({
 					styles['--configurable-node-input-count'] = nonMainInputs.length + spacerCount;
 				}
 
+				const mainInputs = inputTypes.filter((output) => output === NodeConnectionType.Main);
+				styles['--node-main-input-count'] = mainInputs.length;
+
 				let outputs = [] as Array<ConnectionTypes | INodeOutputConfiguration>;
 				if (this.workflow.nodes[this.node.name]) {
 					outputs = NodeHelpers.getNodeOutputs(this.workflow, this.node, this.nodeType);
@@ -536,7 +592,7 @@ export default defineComponent({
 			return undefined;
 		},
 		workflowRunning(): boolean {
-			return this.uiStore.isActionActive('workflowRunning');
+			return this.uiStore.isActionActive['workflowRunning'];
 		},
 		nodeStyle() {
 			const returnStyles: {
@@ -678,6 +734,16 @@ export default defineComponent({
 		}
 	},
 	mounted() {
+		// Initialize the node
+		if (this.data !== null) {
+			try {
+				this.addNode(this.data);
+			} catch (error) {
+				// This breaks when new nodes are loaded into store but workflow tab is not currently active
+				// Shouldn't affect anything
+			}
+		}
+
 		setTimeout(() => {
 			this.setSubtitle();
 		}, 0);
@@ -816,7 +882,10 @@ export default defineComponent({
 		Increase height by 20px for each output beyond the 4th one.
 		max(0, var(--node-main-output-count, 1) - 4) ensures that we only start counting after the 4th output.
 	*/
-	--node-height: calc(100px + max(0, var(--node-main-output-count, 1) - 4) * 20px);
+	--node-height: max(
+		calc(100px + max(0, var(--node-main-input-count, 1) - 3) * 30px),
+		calc(100px + max(0, var(--node-main-output-count, 1) - 4) * 20px)
+	);
 
 	--configurable-node-min-input-count: 4;
 	--configurable-node-input-width: 65px;

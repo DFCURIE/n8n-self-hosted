@@ -36,7 +36,7 @@ const WORKFLOW_LIST_ITEM_ACTIONS = {
 const props = withDefaults(
 	defineProps<{
 		data: IWorkflowDb;
-		readOnly: boolean;
+		readOnly?: boolean;
 	}>(),
 	{
 		data: () => ({
@@ -56,8 +56,8 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-	(event: 'expand:tags'): void;
-	(event: 'click:tag', tagId: string, e: PointerEvent): void;
+	'expand:tags': [];
+	'click:tag': [tagId: string, e: PointerEvent];
 }>();
 
 const toast = useToast();

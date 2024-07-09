@@ -8,7 +8,8 @@ import { createReadStream, createWriteStream, existsSync } from 'fs';
 import { pipeline } from 'stream/promises';
 import replaceStream from 'replacestream';
 import glob from 'fast-glob';
-import { jsonParse } from 'n8n-workflow';
+import { GlobalConfig } from '@n8n/config';
+import { jsonParse, randomString } from 'n8n-workflow';
 
 import config from '@/config';
 import { ActiveExecutions } from '@/ActiveExecutions';
@@ -31,6 +32,8 @@ import type { IWorkflowExecutionDataProcess } from '@/Interfaces';
 import { ExecutionService } from '@/executions/execution.service';
 import { OwnershipService } from '@/services/ownership.service';
 import { WorkflowRunner } from '@/WorkflowRunner';
+import { ExecutionRecoveryService } from '@/executions/execution-recovery.service';
+import { EventRelay } from '@/eventbus/event-relay.service';
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-var-requires
 const open = require('open');
@@ -64,8 +67,6 @@ export class Start extends BaseCommand {
 	protected activeWorkflowManager: ActiveWorkflowManager;
 
 	protected server = Container.get(Server);
-
-	private pruningService: PruningService;
 
 	constructor(argv: string[], cmdConfig: Config) {
 		super(argv, cmdConfig);
@@ -182,6 +183,16 @@ export class Start extends BaseCommand {
 
 		await this.initOrchestration();
 		this.logger.debug('Orchestration init complete');
+
+		if (
+			!config.getEnv('license.autoRenewEnabled') &&
+			config.getEnv('multiMainSetup.instanceType') === 'leader'
+		) {
+			this.logger.warn(
+				'Automatic license renewal is disabled. The license will not renew automatically, and access to licensed features may be lost!',
+			);
+		}
+
 		Container.get(WaitTracker).init();
 		this.logger.debug('Wait tracker init complete');
 		await this.initBinaryDataService();
@@ -199,7 +210,10 @@ export class Start extends BaseCommand {
 	}
 
 	async initOrchestration() {
-		if (config.getEnv('executions.mode') !== 'queue') return;
+		if (config.getEnv('executions.mode') === 'regular') {
+			config.set('multiMainSetup.instanceType', 'leader');
+			return;
+		}
 
 		if (
 			config.getEnv('multiMainSetup.enabled') &&
@@ -247,9 +261,10 @@ export class Start extends BaseCommand {
 			});
 		}
 
-		const dbType = config.getEnv('database.type');
+		const globalConfig = Container.get(GlobalConfig);
+		const { type: dbType } = globalConfig.database;
 		if (dbType === 'sqlite') {
-			const shouldRunVacuum = config.getEnv('database.sqlite.executeVacuumOnStartup');
+			const shouldRunVacuum = globalConfig.database.sqlite.executeVacuumOnStartup;
 			if (shouldRunVacuum) {
 				await Container.get(ExecutionRepository).query('VACUUM;');
 			}
@@ -263,12 +278,7 @@ export class Start extends BaseCommand {
 
 			if (tunnelSubdomain === '') {
 				// When no tunnel subdomain did exist yet create a new random one
-				const availableCharacters = 'abcdefghijklmnopqrstuvwxyz0123456789';
-				tunnelSubdomain = Array.from({ length: 24 })
-					.map(() =>
-						availableCharacters.charAt(Math.floor(Math.random() * availableCharacters.length)),
-					)
-					.join('');
+				tunnelSubdomain = randomString(24).toLowerCase();
 
 				this.instanceSettings.update({ tunnelSubdomain });
 			}
@@ -290,7 +300,8 @@ export class Start extends BaseCommand {
 
 		await this.server.start();
 
-		await this.initPruning();
+		Container.get(PruningService).init();
+		Container.get(ExecutionRecoveryService).init();
 
 		if (config.getEnv('executions.mode') === 'regular') {
 			await this.runEnqueuedExecutions();
@@ -333,24 +344,6 @@ export class Start extends BaseCommand {
 		}
 	}
 
-	async initPruning() {
-		this.pruningService = Container.get(PruningService);
-
-		this.pruningService.startPruning();
-
-		if (config.getEnv('executions.mode') !== 'queue') return;
-
-		const orchestrationService = Container.get(OrchestrationService);
-
-		await orchestrationService.init();
-
-		if (!orchestrationService.isMultiMainSetupEnabled) return;
-
-		orchestrationService.multiMainSetup
-			.on('leader-stepdown', () => this.pruningService.stopPruning())
-			.on('leader-takeover', () => this.pruningService.startPruning());
-	}
-
 	async catch(error: Error) {
 		if (error.stack) this.logger.error(error.stack);
 		await this.exitWithCrash('Exiting due to an error.', error);
@@ -384,6 +377,10 @@ export class Start extends BaseCommand {
 				workflowData: execution.workflowData,
 				projectId: project.id,
 			};
+
+			Container.get(EventRelay).emit('execution-started-during-bootup', {
+				executionId: execution.id,
+			});
 
 			// do not block - each execution either runs concurrently or is queued
 			void workflowRunner.run(data, undefined, false, execution.id);

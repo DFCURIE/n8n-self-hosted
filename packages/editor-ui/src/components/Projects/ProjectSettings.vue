@@ -69,7 +69,7 @@ const firstLicensedRole = computed(() => projectRoles.value.find((role) => role.
 
 const onAddMember = (userId: string) => {
 	isDirty.value = true;
-	const user = usersStore.getUserById(userId);
+	const user = usersStore.usersById[userId];
 	if (!user) return;
 
 	const { id, firstName, lastName, email } = user;
@@ -262,6 +262,7 @@ onBeforeMount(async () => {
 					v-model="formData.name"
 					type="text"
 					name="name"
+					data-test-id="project-settings-name-input"
 					@input="onNameInput"
 				/>
 			</fieldset>

@@ -1,27 +1,33 @@
 import type { Ref } from 'vue';
 import { ref } from 'vue';
-import { useCanvasMapping } from '@/composables/useCanvasMapping';
-import { createTestNode, createTestWorkflow, createTestWorkflowObject } from '@/__tests__/mocks';
-import type { IConnections, Workflow } from 'n8n-workflow';
-import { createPinia, setActivePinia } from 'pinia';
-import { MANUAL_TRIGGER_NODE_TYPE, SET_NODE_TYPE } from '@/constants';
 import { NodeConnectionType } from 'n8n-workflow';
+import type { Workflow } from 'n8n-workflow';
+import { createPinia, setActivePinia } from 'pinia';
+import { mock } from 'vitest-mock-extended';
 
-vi.mock('@/stores/nodeTypes.store', () => ({
-	useNodeTypesStore: vi.fn(() => ({
-		getNodeType: vi.fn(() => ({
-			name: 'test',
-			description: 'Test Node Description',
-		})),
-		isTriggerNode: vi.fn(),
-		isConfigNode: vi.fn(),
-		isConfigurableNode: vi.fn(),
-	})),
-}));
+import { useCanvasMapping } from '@/composables/useCanvasMapping';
+import type { IWorkflowDb } from '@/Interface';
+import {
+	createTestWorkflowObject,
+	mockNode,
+	mockNodes,
+	mockNodeTypeDescription,
+} from '@/__tests__/mocks';
+import { MANUAL_TRIGGER_NODE_TYPE, SET_NODE_TYPE } from '@/constants';
+import { useNodeTypesStore } from '@/stores/nodeTypes.store';
 
 beforeEach(() => {
 	const pinia = createPinia();
 	setActivePinia(pinia);
+
+	useNodeTypesStore().setNodeTypes([
+		mockNodeTypeDescription({
+			name: MANUAL_TRIGGER_NODE_TYPE,
+		}),
+		mockNodeTypeDescription({
+			name: SET_NODE_TYPE,
+		}),
+	]);
 });
 
 afterEach(() => {
@@ -30,11 +36,8 @@ afterEach(() => {
 
 describe('useCanvasMapping', () => {
 	it('should initialize with default props', () => {
-		const workflow = createTestWorkflow({
-			id: '1',
-			name: 'Test Workflow',
+		const workflow = mock<IWorkflowDb>({
 			nodes: [],
-			connections: {},
 		});
 		const workflowObject = createTestWorkflowObject(workflow);
 
@@ -49,14 +52,13 @@ describe('useCanvasMapping', () => {
 
 	describe('elements', () => {
 		it('should map nodes to canvas elements', () => {
-			const node = createTestNode({
-				name: 'Node',
+			const manualTriggerNode = mockNode({
+				name: 'Manual Trigger',
 				type: MANUAL_TRIGGER_NODE_TYPE,
+				disabled: false,
 			});
-			const workflow = createTestWorkflow({
-				name: 'Test Workflow',
-				nodes: [node],
-				connections: {},
+			const workflow = mock<IWorkflowDb>({
+				nodes: [manualTriggerNode],
 			});
 			const workflowObject = createTestWorkflowObject(workflow);
 
@@ -67,43 +69,125 @@ describe('useCanvasMapping', () => {
 
 			expect(elements.value).toEqual([
 				{
-					id: node.id,
-					label: node.name,
+					id: manualTriggerNode.id,
+					label: manualTriggerNode.name,
 					type: 'canvas-node',
-					position: { x: 0, y: 0 },
+					position: expect.anything(),
 					data: {
-						id: node.id,
-						type: node.type,
-						typeVersion: 1,
-						inputs: [],
-						outputs: [],
-						renderType: 'default',
+						id: manualTriggerNode.id,
+						type: manualTriggerNode.type,
+						typeVersion: expect.anything(),
+						disabled: false,
+						execution: {
+							status: 'new',
+							waiting: undefined,
+						},
+						issues: {
+							items: [],
+							visible: false,
+						},
+						pinnedData: {
+							count: 0,
+							visible: false,
+						},
+						runData: {
+							count: 0,
+							visible: false,
+						},
+						inputs: [
+							{
+								index: 0,
+								label: undefined,
+								type: 'main',
+							},
+						],
+						outputs: [
+							{
+								index: 0,
+								label: undefined,
+								type: 'main',
+							},
+						],
+						connections: {
+							input: {},
+							output: {},
+						},
+						renderType: 'trigger',
 					},
 				},
 			]);
+		});
+
+		it('should handle node disabled state', () => {
+			const manualTriggerNode = mockNode({
+				name: 'Manual Trigger',
+				type: MANUAL_TRIGGER_NODE_TYPE,
+				disabled: true,
+			});
+			const workflow = mock<IWorkflowDb>({
+				nodes: [manualTriggerNode],
+			});
+			const workflowObject = createTestWorkflowObject(workflow);
+
+			const { elements } = useCanvasMapping({
+				workflow: ref(workflow),
+				workflowObject: ref(workflowObject) as Ref<Workflow>,
+			});
+
+			expect(elements.value[0]?.data?.disabled).toEqual(true);
+		});
+
+		it('should handle input and output connections', () => {
+			const [manualTriggerNode, setNode] = mockNodes.slice(0, 2);
+			const workflow = mock<IWorkflowDb>({
+				nodes: [manualTriggerNode, setNode],
+				connections: {
+					[manualTriggerNode.name]: {
+						[NodeConnectionType.Main]: [
+							[{ node: setNode.name, type: NodeConnectionType.Main, index: 0 }],
+						],
+					},
+				},
+			});
+			const workflowObject = createTestWorkflowObject(workflow);
+
+			const { elements } = useCanvasMapping({
+				workflow: ref(workflow),
+				workflowObject: ref(workflowObject) as Ref<Workflow>,
+			});
+
+			expect(elements.value[0]?.data?.connections.output).toHaveProperty(NodeConnectionType.Main);
+			expect(elements.value[0]?.data?.connections.output[NodeConnectionType.Main][0][0]).toEqual(
+				expect.objectContaining({
+					node: setNode.name,
+					type: NodeConnectionType.Main,
+					index: 0,
+				}),
+			);
+
+			expect(elements.value[1]?.data?.connections.input).toHaveProperty(NodeConnectionType.Main);
+			expect(elements.value[1]?.data?.connections.input[NodeConnectionType.Main][0][0]).toEqual(
+				expect.objectContaining({
+					node: manualTriggerNode.name,
+					type: NodeConnectionType.Main,
+					index: 0,
+				}),
+			);
 		});
 	});
 
 	describe('connections', () => {
 		it('should map connections to canvas connections', () => {
-			const nodeA = createTestNode({
-				name: 'Node A',
-				type: MANUAL_TRIGGER_NODE_TYPE,
-			});
-			const nodeB = createTestNode({
-				name: 'Node B',
-				type: SET_NODE_TYPE,
-			});
-			const workflow = createTestWorkflow({
-				name: 'Test Workflow',
-				nodes: [nodeA, nodeB],
+			const [manualTriggerNode, setNode] = mockNodes.slice(0, 2);
+			const workflow = mock<IWorkflowDb>({
+				nodes: [manualTriggerNode, setNode],
 				connections: {
-					[nodeA.name]: {
+					[manualTriggerNode.name]: {
 						[NodeConnectionType.Main]: [
-							[{ node: nodeB.name, type: NodeConnectionType.Main, index: 0 }],
+							[{ node: setNode.name, type: NodeConnectionType.Main, index: 0 }],
 						],
 					},
-				} as IConnections,
+				},
 			});
 			const workflowObject = createTestWorkflowObject(workflow);
 
@@ -115,21 +199,22 @@ describe('useCanvasMapping', () => {
 			expect(connections.value).toEqual([
 				{
 					data: {
-						fromNodeName: nodeA.name,
+						fromNodeName: manualTriggerNode.name,
 						source: {
 							index: 0,
 							type: NodeConnectionType.Main,
 						},
+						status: undefined,
 						target: {
 							index: 0,
 							type: NodeConnectionType.Main,
 						},
 					},
-					id: `[${nodeA.id}/${NodeConnectionType.Main}/0][${nodeB.id}/${NodeConnectionType.Main}/0]`,
+					id: `[${manualTriggerNode.id}/${NodeConnectionType.Main}/0][${setNode.id}/${NodeConnectionType.Main}/0]`,
 					label: '',
-					source: nodeA.id,
+					source: manualTriggerNode.id,
 					sourceHandle: `outputs/${NodeConnectionType.Main}/0`,
-					target: nodeB.id,
+					target: setNode.id,
 					targetHandle: `inputs/${NodeConnectionType.Main}/0`,
 					type: 'canvas-edge',
 				},
@@ -137,24 +222,16 @@ describe('useCanvasMapping', () => {
 		});
 
 		it('should map multiple input types to canvas connections', () => {
-			const nodeA = createTestNode({
-				name: 'Node A',
-				type: MANUAL_TRIGGER_NODE_TYPE,
-			});
-			const nodeB = createTestNode({
-				name: 'Node B',
-				type: SET_NODE_TYPE,
-			});
-			const workflow = createTestWorkflow({
-				name: 'Test Workflow',
-				nodes: [nodeA, nodeB],
+			const [manualTriggerNode, setNode] = mockNodes.slice(0, 2);
+			const workflow = mock<IWorkflowDb>({
+				nodes: [manualTriggerNode, setNode],
 				connections: {
-					'Node A': {
+					[manualTriggerNode.name]: {
 						[NodeConnectionType.AiTool]: [
-							[{ node: nodeB.name, type: NodeConnectionType.AiTool, index: 0 }],
+							[{ node: setNode.name, type: NodeConnectionType.AiTool, index: 0 }],
 						],
 						[NodeConnectionType.AiDocument]: [
-							[{ node: nodeB.name, type: NodeConnectionType.AiDocument, index: 1 }],
+							[{ node: setNode.name, type: NodeConnectionType.AiDocument, index: 1 }],
 						],
 					},
 				},
@@ -169,41 +246,43 @@ describe('useCanvasMapping', () => {
 			expect(connections.value).toEqual([
 				{
 					data: {
-						fromNodeName: nodeA.name,
+						fromNodeName: manualTriggerNode.name,
 						source: {
 							index: 0,
 							type: NodeConnectionType.AiTool,
 						},
+						status: undefined,
 						target: {
 							index: 0,
 							type: NodeConnectionType.AiTool,
 						},
 					},
-					id: `[${nodeA.id}/${NodeConnectionType.AiTool}/0][${nodeB.id}/${NodeConnectionType.AiTool}/0]`,
+					id: `[${manualTriggerNode.id}/${NodeConnectionType.AiTool}/0][${setNode.id}/${NodeConnectionType.AiTool}/0]`,
 					label: '',
-					source: nodeA.id,
+					source: manualTriggerNode.id,
 					sourceHandle: `outputs/${NodeConnectionType.AiTool}/0`,
-					target: nodeB.id,
+					target: setNode.id,
 					targetHandle: `inputs/${NodeConnectionType.AiTool}/0`,
 					type: 'canvas-edge',
 				},
 				{
 					data: {
-						fromNodeName: nodeA.name,
+						fromNodeName: manualTriggerNode.name,
 						source: {
 							index: 0,
 							type: NodeConnectionType.AiDocument,
 						},
+						status: undefined,
 						target: {
 							index: 1,
 							type: NodeConnectionType.AiDocument,
 						},
 					},
-					id: `[${nodeA.id}/${NodeConnectionType.AiDocument}/0][${nodeB.id}/${NodeConnectionType.AiDocument}/1]`,
+					id: `[${manualTriggerNode.id}/${NodeConnectionType.AiDocument}/0][${setNode.id}/${NodeConnectionType.AiDocument}/1]`,
 					label: '',
-					source: nodeA.id,
+					source: manualTriggerNode.id,
 					sourceHandle: `outputs/${NodeConnectionType.AiDocument}/0`,
-					target: nodeB.id,
+					target: setNode.id,
 					targetHandle: `inputs/${NodeConnectionType.AiDocument}/1`,
 					type: 'canvas-edge',
 				},

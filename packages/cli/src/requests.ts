@@ -24,6 +24,7 @@ import type { WorkflowHistory } from '@db/entities/WorkflowHistory';
 import type { Project, ProjectType } from '@db/entities/Project';
 import type { ProjectRole } from './databases/entities/ProjectRelation';
 import type { Scope } from '@n8n/permissions';
+import type { ScopesField } from './services/role.service';
 
 export class UserUpdatePayload implements Pick<User, 'email' | 'firstName' | 'lastName'> {
 	@Expose()
@@ -125,8 +126,6 @@ export namespace ListQuery {
 
 		type OwnedByField = { ownedBy: SlimUser | null; homeProject: SlimProject | null };
 
-		type ScopesField = { scopes: Scope[] };
-
 		export type Plain = BaseFields;
 
 		export type WithSharing = BaseFields & SharedField;
@@ -150,8 +149,6 @@ export namespace ListQuery {
 
 		type SharedWithField = { sharedWithProjects: SlimProject[] };
 
-		type ScopesField = { scopes: Scope[] };
-
 		export type WithSharing = CredentialsEntity & SharedField;
 
 		export type WithOwnedByAndSharedWith = CredentialsEntity &
@@ -170,19 +167,6 @@ export function hasSharing(
 	workflows: ListQuery.Workflow.Plain[] | ListQuery.Workflow.WithSharing[],
 ): workflows is ListQuery.Workflow.WithSharing[] {
 	return workflows.some((w) => 'shared' in w);
-}
-
-// ----------------------------------
-//          /ai
-// ----------------------------------
-
-export declare namespace AIRequest {
-	export type GenerateCurl = AuthenticatedRequest<{}, {}, AIGenerateCurlPayload>;
-}
-
-export interface AIGenerateCurlPayload {
-	service: string;
-	request: string;
 }
 
 // ----------------------------------
@@ -222,6 +206,13 @@ export declare namespace CredentialRequest {
 		{ credentialId: string },
 		{},
 		{ destinationProjectId: string }
+	>;
+
+	type ForWorkflow = AuthenticatedRequest<
+		{},
+		{},
+		{},
+		{ workflowId: string } | { projectId: string }
 	>;
 }
 

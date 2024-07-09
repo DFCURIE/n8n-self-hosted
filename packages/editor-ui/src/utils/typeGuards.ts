@@ -8,6 +8,9 @@ import { nodeConnectionTypes } from 'n8n-workflow';
 import type { IExecutionResponse, ICredentialsResponse, NewCredentialsModal } from '@/Interface';
 import type { jsPlumbDOMElement } from '@jsplumb/browser-ui';
 import type { Connection } from '@jsplumb/core';
+import type { RouteLocationRaw } from 'vue-router';
+import type { CanvasConnectionMode } from '@/types';
+import { canvasConnectionModes } from '@/types';
 
 /*
 	Type guards used in editor-ui project
@@ -68,6 +71,10 @@ export function isValidNodeConnectionType(
 	return nodeConnectionTypes.includes(connectionType as NodeConnectionType);
 }
 
+export function isValidCanvasConnectionMode(mode: string): mode is CanvasConnectionMode {
+	return canvasConnectionModes.includes(mode as CanvasConnectionMode);
+}
+
 export function isTriggerPanelObject(
 	triggerPanel: INodeTypeDescription['triggerPanel'],
 ): triggerPanel is TriggerPanelDefinition {
@@ -78,4 +85,11 @@ export function isFullExecutionResponse(
 	execution: IExecutionResponse | null,
 ): execution is IExecutionResponse {
 	return !!execution && 'status' in execution;
+}
+
+export function isRouteLocationRaw(value: unknown): value is RouteLocationRaw {
+	return (
+		typeof value === 'string' ||
+		(typeof value === 'object' && value !== null && ('name' in value || 'path' in value))
+	);
 }

@@ -37,6 +37,7 @@ import { PermissionChecker } from '@/UserManagement/PermissionChecker';
 import { InternalHooks } from '@/InternalHooks';
 import { Logger } from '@/Logger';
 import { WorkflowStaticDataService } from '@/workflows/workflowStaticData.service';
+import { EventRelay } from './eventbus/event-relay.service';
 
 @Service()
 export class WorkflowRunner {
@@ -52,6 +53,7 @@ export class WorkflowRunner {
 		private readonly workflowStaticDataService: WorkflowStaticDataService,
 		private readonly nodeTypes: NodeTypes,
 		private readonly permissionChecker: PermissionChecker,
+		private readonly eventRelay: EventRelay,
 	) {
 		if (this.executionsMode === 'queue') {
 			this.jobQueue = Container.get(Queue);
@@ -144,8 +146,8 @@ export class WorkflowRunner {
 			// frontend would not be possible
 			await this.enqueueExecution(executionId, data, loadStaticData, realtime);
 		} else {
-			await this.runMainProcess(executionId, data, loadStaticData, executionId);
-			void Container.get(InternalHooks).onWorkflowBeforeExecute(executionId, data);
+			await this.runMainProcess(executionId, data, loadStaticData, restartExecutionId);
+			this.eventRelay.emit('workflow-pre-execute', { executionId, data });
 		}
 
 		// only run these when not in queue mode or when the execution is manual,
@@ -164,6 +166,14 @@ export class WorkflowRunner {
 						executionData,
 						data.userId,
 					);
+					this.eventRelay.emit('workflow-post-execute', {
+						workflowId: data.workflowData.id,
+						workflowName: data.workflowData.name,
+						executionId,
+						success: executionData?.status === 'success',
+						isManual: data.executionMode === 'manual',
+						userId: data.userId,
+					});
 					if (this.externalHooks.exists('workflow.postExecute')) {
 						try {
 							await this.externalHooks.run('workflow.postExecute', [
@@ -263,7 +273,6 @@ export class WorkflowRunner {
 				pushRef: data.pushRef,
 			});
 
-			await additionalData.hooks.executeHookFunctions('workflowExecuteBefore', []);
 			if (data.executionData !== undefined) {
 				this.logger.debug(`Execution ID ${executionId} had Execution data. Running with payload.`, {
 					executionId,

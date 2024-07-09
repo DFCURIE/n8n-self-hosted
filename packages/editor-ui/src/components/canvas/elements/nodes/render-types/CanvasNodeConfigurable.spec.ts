@@ -2,8 +2,15 @@ import CanvasNodeConfigurable from '@/components/canvas/elements/nodes/render-ty
 import { createComponentRenderer } from '@/__tests__/render';
 import { NodeConnectionType } from 'n8n-workflow';
 import { createCanvasNodeProvide } from '@/__tests__/data';
+import { setActivePinia } from 'pinia';
+import { createTestingPinia } from '@pinia/testing';
 
 const renderComponent = createComponentRenderer(CanvasNodeConfigurable);
+
+beforeEach(() => {
+	const pinia = createTestingPinia();
+	setActivePinia(pinia);
+});
 
 describe('CanvasNodeConfigurable', () => {
 	it('should render node correctly', () => {
@@ -41,6 +48,36 @@ describe('CanvasNodeConfigurable', () => {
 				},
 			});
 			expect(getByText('Test Node').closest('.node')).not.toHaveClass('selected');
+		});
+	});
+
+	describe('disabled', () => {
+		it('should apply disabled class when node is disabled', () => {
+			const { getByText } = renderComponent({
+				global: {
+					provide: {
+						...createCanvasNodeProvide({
+							data: {
+								disabled: true,
+							},
+						}),
+					},
+				},
+			});
+
+			expect(getByText('Test Node').closest('.node')).toHaveClass('disabled');
+			expect(getByText('(Deactivated)')).toBeVisible();
+		});
+
+		it('should not apply disabled class when node is enabled', () => {
+			const { getByText } = renderComponent({
+				global: {
+					provide: {
+						...createCanvasNodeProvide(),
+					},
+				},
+			});
+			expect(getByText('Test Node').closest('.node')).not.toHaveClass('disabled');
 		});
 	});
 

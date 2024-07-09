@@ -1,5 +1,7 @@
 import { Service } from 'typedi';
+// eslint-disable-next-line n8n-local-rules/misplaced-n8n-typeorm-import
 import type { DeleteResult } from '@n8n/typeorm';
+// eslint-disable-next-line n8n-local-rules/misplaced-n8n-typeorm-import
 import { In } from '@n8n/typeorm';
 import EventEmitter from 'events';
 import uniqby from 'lodash/uniqBy';
@@ -33,6 +35,8 @@ import {
 	type EventMessageAiNodeOptions,
 } from '../EventMessageClasses/EventMessageAiNode';
 import { License } from '@/License';
+import type { EventMessageExecutionOptions } from '../EventMessageClasses/EventMessageExecution';
+import { EventMessageExecution } from '../EventMessageClasses/EventMessageExecution';
 
 export type EventMessageReturnMode = 'sent' | 'unsent' | 'all' | 'unfinished';
 
@@ -175,18 +179,8 @@ export class MessageEventBus extends EventEmitter {
 					// start actual recovery process and write recovery process flag file
 					this.logWriter?.startRecoveryProcess();
 					for (const executionId of unfinishedExecutionIds) {
-						this.logger.warn(`Attempting to recover execution ${executionId}`);
-						if (!unsentAndUnfinished.unfinishedExecutions[executionId]?.length) {
-							this.logger.debug(
-								`No event messages found, marking execution ${executionId} as 'crashed'`,
-							);
-							await this.executionRepository.markAsCrashed([executionId]);
-						} else {
-							await this.recoveryService.recover(
-								executionId,
-								unsentAndUnfinished.unfinishedExecutions[executionId],
-							);
-						}
+						const logMesssages = unsentAndUnfinished.unfinishedExecutions[executionId];
+						await this.recoveryService.recoverFromLogs(executionId, logMesssages ?? []);
 					}
 				}
 				// remove the recovery process flag file
@@ -367,7 +361,7 @@ export class MessageEventBus extends EventEmitter {
 
 	async getUnsentAndUnfinishedExecutions(): Promise<{
 		unsentMessages: EventMessageTypes[];
-		unfinishedExecutions: Record<string, EventMessageTypes[]>;
+		unfinishedExecutions: Record<string, EventMessageTypes[] | undefined>;
 	}> {
 		const queryResult = await this.logWriter?.getUnsentAndUnfinishedExecutions();
 		return queryResult;
@@ -404,5 +398,9 @@ export class MessageEventBus extends EventEmitter {
 
 	async sendAiNodeEvent(options: EventMessageAiNodeOptions) {
 		await this.send(new EventMessageAiNode(options));
+	}
+
+	async sendExecutionEvent(options: EventMessageExecutionOptions) {
+		await this.send(new EventMessageExecution(options));
 	}
 }

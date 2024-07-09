@@ -1,5 +1,8 @@
 import { deepCopy } from 'n8n-workflow';
-import config from '@/config';
+import { GlobalConfig } from '@n8n/config';
+// eslint-disable-next-line n8n-local-rules/misplaced-n8n-typeorm-import
+import { In } from '@n8n/typeorm';
+
 import { CredentialsService } from './credentials.service';
 import { CredentialRequest } from '@/requests';
 import { InternalHooks } from '@/InternalHooks';
@@ -25,14 +28,15 @@ import * as Db from '@/Db';
 import * as utils from '@/utils';
 import { listQueryMiddleware } from '@/middlewares';
 import { SharedCredentialsRepository } from '@/databases/repositories/sharedCredentials.repository';
-import { In } from '@n8n/typeorm';
 import { SharedCredentials } from '@/databases/entities/SharedCredentials';
 import { ProjectRelationRepository } from '@/databases/repositories/projectRelation.repository';
 import { z } from 'zod';
+import { EventRelay } from '@/eventbus/event-relay.service';
 
 @RestController('/credentials')
 export class CredentialsController {
 	constructor(
+		private readonly globalConfig: GlobalConfig,
 		private readonly credentialsService: CredentialsService,
 		private readonly enterpriseCredentialsService: EnterpriseCredentialsService,
 		private readonly namingService: NamingService,
@@ -42,6 +46,7 @@ export class CredentialsController {
 		private readonly userManagementMailer: UserManagementMailer,
 		private readonly sharedCredentialsRepository: SharedCredentialsRepository,
 		private readonly projectRelationRepository: ProjectRelationRepository,
+		private readonly eventRelay: EventRelay,
 	) {}
 
 	@Get('/', { middlewares: listQueryMiddleware })
@@ -52,9 +57,17 @@ export class CredentialsController {
 		});
 	}
 
+	@Get('/for-workflow')
+	async getProjectCredentials(req: CredentialRequest.ForWorkflow) {
+		const options = z
+			.union([z.object({ workflowId: z.string() }), z.object({ projectId: z.string() })])
+			.parse(req.query);
+		return await this.credentialsService.getCredentialsAUserCanUseInAWorkflow(req.user, options);
+	}
+
 	@Get('/new')
 	async generateUniqueName(req: CredentialRequest.NewName) {
-		const requestedName = req.query.name ?? config.getEnv('credentials.defaultName');
+		const requestedName = req.query.name ?? this.globalConfig.credentials.defaultName;
 
 		return {
 			name: await this.namingService.getUniqueCredentialName(requestedName),
@@ -156,6 +169,12 @@ export class CredentialsController {
 			credential_id: credential.id,
 			public_api: false,
 		});
+		this.eventRelay.emit('credentials-created', {
+			user: req.user,
+			credentialName: newCredential.name,
+			credentialType: credential.type,
+			credentialId: credential.id,
+		});
 
 		const scopes = await this.credentialsService.getCredentialScopes(req.user, credential.id);
 
@@ -210,6 +229,12 @@ export class CredentialsController {
 			credential_type: credential.type,
 			credential_id: credential.id,
 		});
+		this.eventRelay.emit('credentials-updated', {
+			user: req.user,
+			credentialName: credential.name,
+			credentialType: credential.type,
+			credentialId: credential.id,
+		});
 
 		const scopes = await this.credentialsService.getCredentialScopes(req.user, credential.id);
 
@@ -244,6 +269,12 @@ export class CredentialsController {
 			credential_name: credential.name,
 			credential_type: credential.type,
 			credential_id: credential.id,
+		});
+		this.eventRelay.emit('credentials-deleted', {
+			user: req.user,
+			credentialName: credential.name,
+			credentialType: credential.type,
+			credentialId: credential.id,
 		});
 
 		return true;
@@ -312,6 +343,15 @@ export class CredentialsController {
 			user_id_sharer: req.user.id,
 			user_ids_sharees_added: newShareeIds,
 			sharees_removed: amountRemoved,
+		});
+		this.eventRelay.emit('credentials-shared', {
+			user: req.user,
+			credentialName: credential.name,
+			credentialType: credential.type,
+			credentialId: credential.id,
+			userIdSharer: req.user.id,
+			userIdsShareesRemoved: newShareeIds,
+			shareesRemoved: amountRemoved,
 		});
 
 		const projectsRelations = await this.projectRelationRepository.findBy({

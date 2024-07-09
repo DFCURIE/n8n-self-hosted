@@ -165,6 +165,7 @@ export type IResource = {
 	id: string;
 	name: string;
 	value: string;
+	key?: string;
 	updatedAt?: string;
 	createdAt?: string;
 	homeProject?: ProjectSharingData;
@@ -258,7 +259,7 @@ export default defineComponent({
 		const hasFilters = ref(false);
 		const filtersModel = ref(props.filters);
 		const currentPage = ref(1);
-		const rowsPerPage = ref<number | '*'>(10);
+		const rowsPerPage = ref<number>(10);
 		const resettingFilters = ref(false);
 		const search = ref<HTMLElement | null>(null);
 
@@ -332,7 +333,7 @@ export default defineComponent({
 			);
 		};
 
-		const setRowsPerPage = (numberOfRowsPerPage: number | '*') => {
+		const setRowsPerPage = (numberOfRowsPerPage: number) => {
 			rowsPerPage.value = numberOfRowsPerPage;
 		};
 
